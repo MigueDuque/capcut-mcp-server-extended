@@ -1,7 +1,10 @@
 // Tool registration and implementation for CapCut MCP server
 
+import path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { apiClient } from '../services/api-client.js';
+import { VECTCUT_DRAFT_DIR } from '../constants.js';
+import { publishDraftToCapcut } from '../utils/publish-draft.js';
 import { ResponseFormat } from '../types.js';
 import {
   CreateDraftSchema,
@@ -15,6 +18,8 @@ import {
   AddStickerSchema,
   SaveDraftSchema,
   GetDurationSchema,
+  AddAnimatedTextSchema,
+  AddEditDraftWordsSchema,
   type CreateDraftInput,
   type AddVideoInput,
   type AddAudioInput,
@@ -25,8 +30,12 @@ import {
   type AddEffectInput,
   type AddStickerInput,
   type SaveDraftInput,
-  type GetDurationInput
+  type GetDurationInput,
+  type AddAnimatedTextInput,
+  type AddEditDraftWordsInput
 } from '../schemas/index.js';
+import { getTypographyStyle } from '../presets/typography.js';
+import { getAnimation, resolveKeyframes } from '../presets/animations.js';
 
 // Utility function to format responses
 function formatResponse(data: any, format: ResponseFormat): {
@@ -554,6 +563,124 @@ The draft folder starts with "dfd_" and should be copied to:
     }
   );
 
+  // Tool 12: Add Animated Text
+  server.registerTool(
+    'capcut_add_animated_text',
+    {
+      title: 'Add Animated Text',
+      description: `Add styled, animated text to a draft using named typography and animation presets.
+
+Combines capcut_add_text + capcut_add_keyframe into a single call.
+
+Args:
+  - draft_id (string): The draft ID
+  - text (string): Text content (1-500 characters)
+  - start (number): Start time in seconds
+  - end (number): End time in seconds
+  - position_x (number): Horizontal position 0.0-1.0 (default: 0.5)
+  - position_y (number): Vertical position 0.0-1.0 (default: 0.5)
+  - typography_style ('defaultTypeWhite' | 'defaultTypeBlack' | 'defaultTypeRed'): Named style (default: 'defaultTypeWhite')
+  - animation_in ('popInUpper'): Named entrance animation (optional)
+  - animation_out ('popInUpper'): Named exit animation (optional)
+  - custom_keyframes: Explicit keyframe overrides — when provided, animation_in/out are ignored
+  - response_format ('markdown' | 'json'): Output format
+
+Examples:
+  - Animated title: text="Hola mundo", typography_style="defaultTypeWhite", animation_in="popInUpper"
+  - Red label, no animation: text="LIVE", typography_style="defaultTypeRed"`,
+      inputSchema: AddAnimatedTextSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      }
+    },
+    async (params: AddAnimatedTextInput) => {
+      try {
+        const style = getTypographyStyle(params.typography_style);
+
+        // Step 1: add the text element using the resolved style
+        // track_name must be registered here so keyframe calls can target it
+        const textResponse = await apiClient.addText({
+          draft_id: params.draft_id,
+          text: params.text,
+          start: params.start,
+          end: params.end,
+          font: style.font,
+          font_size: style.font_size,
+          font_color: style.color,
+          border_width: style.stroke.enabled ? style.stroke.thickness : 0,
+          border_color: style.stroke.color,
+          shadow_enabled: style.shadow.enabled,
+          shadow_color: style.shadow.color,
+          shadow_alpha: style.shadow.opacity,
+          shadow_blur: style.shadow.blur,
+          shadow_distance: style.shadow.distance,
+          shadow_angle: style.shadow.angle,
+          position_x: params.position_x,
+          position_y: params.position_y,
+          track_name: params.text,
+          response_format: params.response_format,
+        });
+
+        if (!textResponse.success || !textResponse.result) {
+          throw new Error(textResponse.error || 'Failed to add text');
+        }
+
+        const finalPos = { x: params.position_x, y: params.position_y };
+
+        // Step 2: apply keyframes
+        if (params.custom_keyframes) {
+          // Explicit overrides — apply directly, ignore animation_in/out
+          for (const kf of params.custom_keyframes) {
+            const kfResponse = await apiClient.addKeyframe({
+              draft_id: params.draft_id,
+              track_name: kf.track_name,
+              property_types: kf.property_types,
+              times: kf.times,
+              values: kf.values,
+            });
+            if (!kfResponse.success) {
+              throw new Error(kfResponse.error || 'Failed to add custom keyframe');
+            }
+          }
+        } else {
+          // Named animation presets — one pass for in, one for out
+          const animationsToApply: Array<{ animName: typeof params.animation_in; timeOffset: number }> = [
+            { animName: params.animation_in, timeOffset: params.start },
+            { animName: params.animation_out, timeOffset: params.end },
+          ];
+
+          for (const { animName, timeOffset } of animationsToApply) {
+            if (!animName) continue;
+
+            const animation = getAnimation(animName);
+            const resolvedCalls = resolveKeyframes(animation, finalPos);
+
+            for (const kf of resolvedCalls) {
+              const absoluteTimes = kf.times.map(t => t + timeOffset);
+              const kfResponse = await apiClient.addKeyframe({
+                draft_id: params.draft_id,
+                track_name: params.text,
+                property_types: absoluteTimes.map(() => kf.property_type),
+                times: absoluteTimes,
+                values: kf.values,
+              });
+              if (!kfResponse.success) {
+                throw new Error(kfResponse.error || `Failed to add keyframe for ${kf.property_type}`);
+              }
+            }
+          }
+        }
+
+        return formatResponse(textResponse.result, params.response_format);
+      } catch (error) {
+        return handleError(error);
+      }
+    }
+  );
+
   // Tool 11: Get Media Duration
   server.registerTool(
     'capcut_get_duration',
@@ -595,6 +722,158 @@ Examples:
         }
 
         return formatResponse(response.result, params.response_format);
+      } catch (error) {
+        return handleError(error);
+      }
+    }
+  );
+
+  // Tool 13: Edit Draft – Add Word-by-Word Animated Text
+  server.registerTool(
+    'capcut_edit_draft_words',
+    {
+      title: 'Edit Draft – Add Word-by-Word Animated Text',
+      description: `Create a new CapCut draft from a video file and add each word as individually animated text.
+
+Workflow:
+1. Creates a 1080×1920 draft at the given fps
+2. Adds the main video track (full duration)
+3. Adds each word as animated text using the resolved typography style and entrance animation
+4. Saves the draft to draft_folder
+
+Args:
+  - words (array): list of { word, start, end } with per-word timestamps
+  - video_url (string): local path or URL to the video file
+  - duration_sec (number): total video duration in seconds
+  - fps (number): frame rate (default: 30)
+  - typography_style (string): named style preset (default: 'defaultTypeWhite')
+  - animation_in (string): entrance animation preset (default: 'popInUpper')
+  - position_x (number): horizontal text position 0.0–1.0 (default: 0.5)
+  - position_y (number): vertical text position 0.0–1.0 (default: 0.85)
+  - draft_folder (string): path where CapCut will save the draft
+  - response_format ('markdown' | 'json'): output format
+
+Returns: draft_id, words_added, duration_sec, draft_folder, typography_style, animation_in`,
+      inputSchema: AddEditDraftWordsSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params: AddEditDraftWordsInput) => {
+      try {
+        // Step 1: Create draft
+        const draftResponse = await apiClient.createDraft({
+          width: 1080,
+          height: 1920,
+          fps: params.fps,
+        });
+        // Backend returns { success, output: { draft_id, draft_url }, error }
+        const draftData = (draftResponse as any).output as { draft_id: string } | undefined;
+        if (!draftResponse.success || !draftData?.draft_id) {
+          throw new Error((draftResponse as any).error || 'Failed to create draft');
+        }
+        const draftId = draftData.draft_id;
+
+        // Step 2: Add main video
+        const videoResponse = await apiClient.addVideo({
+          draft_id: draftId,
+          video_url: params.video_url,
+          start: 0,
+          end: params.duration_sec,
+          volume: 1.0,
+        });
+        if (!videoResponse.success) {
+          throw new Error((videoResponse as any).error || 'Failed to add video');
+        }
+
+        // Step 3: Add each word as animated text
+        const style = getTypographyStyle(params.typography_style);
+        const finalPos = { x: params.position_x, y: params.position_y };
+
+        for (const [wordIdx, entry] of params.words.entries()) {
+          // Each word gets a unique track name so keyframes can target it individually
+          const trackName = `w_${wordIdx}`;
+          const textResponse = await apiClient.addText({
+            draft_id: draftId,
+            text: entry.word,
+            start: entry.start,
+            end: entry.end,
+            font: style.font,
+            font_size: style.font_size,
+            font_color: style.color,
+            border_width: style.stroke.enabled ? style.stroke.thickness : 0,
+            border_color: style.stroke.color,
+            shadow_enabled: style.shadow.enabled,
+            shadow_color: style.shadow.color,
+            shadow_alpha: style.shadow.opacity,
+            shadow_blur: style.shadow.blur,
+            shadow_distance: style.shadow.distance,
+            shadow_angle: style.shadow.angle,
+            position_x: params.position_x,
+            position_y: params.position_y,
+            track_name: trackName,
+          });
+          if (!textResponse.success) {
+            throw new Error((textResponse as any).error || `Failed to add text: ${entry.word}`);
+          }
+
+          if (params.animation_in) {
+            const animation = getAnimation(params.animation_in);
+            const resolvedCalls = resolveKeyframes(animation, finalPos);
+            for (const kf of resolvedCalls) {
+              const absoluteTimes = kf.times.map(t => t + entry.start);
+              // property_types must have the same length as times and values
+              const kfResponse = await apiClient.addKeyframe({
+                draft_id: draftId,
+                track_name: trackName,
+                property_types: absoluteTimes.map(() => kf.property_type),
+                times: absoluteTimes,
+                values: kf.values,
+              });
+              if (!kfResponse.success) {
+                throw new Error(
+                  (kfResponse as any).error || `Failed to add keyframe for: ${entry.word}`
+                );
+              }
+            }
+          }
+        }
+
+        // Step 4: Save draft in VectCutAPI (flushes to its local working dir)
+        const saveResponse = await apiClient.request('/save_draft', 'POST', {
+          draft_id: draftId,
+          draft_folder: params.draft_folder,
+        });
+        if (!saveResponse.success) {
+          throw new Error((saveResponse as any).error || 'Failed to save draft');
+        }
+
+        // Step 5: Publish to CapCut (copy + rename + register in root_meta_info.json)
+        const draftName = params.draft_name
+          ?? path.basename(params.video_url, path.extname(params.video_url));
+
+        const publishedPath = await publishDraftToCapcut({
+          draftId,
+          vectcutDraftDir: VECTCUT_DRAFT_DIR,
+          capcutDraftFolder: params.draft_folder,
+          draftName,
+          durationSec: params.duration_sec,
+        });
+
+        // Step 6: Return summary
+        const summary = {
+          draft_id: draftId,
+          draft_name: draftName,
+          words_added: params.words.length,
+          duration_sec: params.duration_sec,
+          published_to: publishedPath,
+          typography_style: params.typography_style,
+          animation_in: params.animation_in ?? null,
+        };
+        return formatResponse(summary, params.response_format);
       } catch (error) {
         return handleError(error);
       }

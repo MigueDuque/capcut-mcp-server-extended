@@ -103,7 +103,7 @@ export class CapCutApiClient {
   }
 
   async addKeyframe(data: any) {
-    return this.request('/add_keyframe', 'POST', data);
+    return this.request('/add_video_keyframe', 'POST', data);
   }
 
   async addEffect(data: any) {

@@ -1,6 +1,10 @@
 // Shared constants for CapCut MCP Server
 
 export const API_BASE_URL = process.env.CAPCUT_API_URL || 'http://localhost:9001';
+
+// Directory where VectCutAPI stores its draft files before publishing to CapCut.
+// Override with the VECTCUT_DRAFT_DIR env var if the API runs from a different path.
+export const VECTCUT_DRAFT_DIR = process.env.VECTCUT_DRAFT_DIR || 'C:/smart_cut/capcut-mcp';
 export const CHARACTER_LIMIT = 15000;
 export const DEFAULT_FPS = 30;
 export const DEFAULT_VIDEO_RESOLUTION = {

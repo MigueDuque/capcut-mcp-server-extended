@@ -7,6 +7,8 @@ import {
   TEXT_ANIMATIONS,
   AVAILABLE_EFFECTS
 } from '../constants.js';
+import { TypographyStyleNameSchema } from '../presets/typography.js';
+import { AnimationNameSchema } from '../presets/animations.js';
 
 // Common schemas
 export const ResponseFormatSchema = z.nativeEnum(ResponseFormat)
@@ -315,7 +317,110 @@ export const GetDurationSchema = z.object({
   response_format: ResponseFormatSchema
 }).strict();
 
+// ---------------------------------------------------------------------------
+// Custom keyframe override (used by AddAnimatedTextSchema)
+// ---------------------------------------------------------------------------
+
+const CustomKeyframeSchema = z.object({
+  track_name: z.string().min(1).describe('Track to animate'),
+  property_types: z.array(z.string()).min(1).describe('Properties to animate'),
+  times: z.array(z.number()).min(2).describe('Keyframe times in seconds'),
+  values: z.array(z.string()).min(2).describe('Values at each keyframe time'),
+});
+
+// Animated text schema — combines typography style + animation preset
+export const AddAnimatedTextSchema = z.object({
+  draft_id: z.string()
+    .min(1, 'Draft ID is required')
+    .describe('The ID of the draft'),
+  text: z.string()
+    .min(1, 'Text content is required')
+    .max(500, 'Text must not exceed 500 characters')
+    .describe('The text content to display'),
+  start: z.number()
+    .min(0, 'Start time must be non-negative')
+    .describe('Start time in seconds'),
+  end: z.number()
+    .positive('End time must be positive')
+    .describe('End time in seconds'),
+  position_x: z.number()
+    .min(0).max(1)
+    .default(0.5)
+    .describe('Horizontal position (0.0 to 1.0, where 0.5 is center)'),
+  position_y: z.number()
+    .min(0).max(1)
+    .default(0.5)
+    .describe('Vertical position (0.0 to 1.0, where 0.5 is center)'),
+  typography_style: TypographyStyleNameSchema
+    .optional()
+    .default('defaultTypeWhite')
+    .describe('Named typography style to apply'),
+  animation_in: AnimationNameSchema
+    .optional()
+    .describe('Named entrance animation'),
+  animation_out: AnimationNameSchema
+    .optional()
+    .describe('Named exit animation'),
+  custom_keyframes: z.array(CustomKeyframeSchema)
+    .optional()
+    .describe('Explicit keyframe overrides — when provided, animation_in/out are ignored'),
+  response_format: ResponseFormatSchema,
+}).strict();
+
+// ---------------------------------------------------------------------------
+// Edit draft words schema — composite tool: create + add video + words + save
+// ---------------------------------------------------------------------------
+
+const WordEntrySchema = z.object({
+  word: z.string().min(1).describe('Word text'),
+  start: z.number().min(0).describe('Start time in seconds'),
+  end: z.number().positive().describe('End time in seconds'),
+});
+
+export const AddEditDraftWordsSchema = z.object({
+  words: z.array(WordEntrySchema)
+    .min(1, 'At least one word is required')
+    .describe('Array of word entries with per-word timestamps'),
+  video_url: z.string()
+    .min(1, 'Video URL/path is required')
+    .describe('Path or URL to the video file'),
+  duration_sec: z.number()
+    .positive('Duration must be positive')
+    .describe('Total video duration in seconds'),
+  fps: z.number()
+    .int()
+    .min(24, 'FPS must be at least 24')
+    .max(120, 'FPS must not exceed 120')
+    .default(30)
+    .describe('Frames per second'),
+  typography_style: TypographyStyleNameSchema
+    .default('defaultTypeWhite')
+    .describe('Named typography style preset'),
+  animation_in: AnimationNameSchema
+    .optional()
+    .default('popInUpper')
+    .describe('Named entrance animation preset'),
+  position_x: z.number()
+    .min(0).max(1)
+    .default(0.5)
+    .describe('Horizontal text position (0.0 to 1.0, where 0.5 is center)'),
+  position_y: z.number()
+    .min(0).max(1)
+    .default(0.85)
+    .describe('Vertical text position (0.0 to 1.0, where 0.85 is near bottom)'),
+  draft_folder: z.string()
+    .min(1, 'Draft folder path is required')
+    .describe('CapCut "com.lveditor.draft" root folder where the draft will be published'),
+  draft_name: z.string()
+    .optional()
+    .describe('Human-readable draft name shown in CapCut (defaults to video filename without extension)'),
+  response_format: ResponseFormatSchema,
+}).strict();
+
+// ---------------------------------------------------------------------------
 // Export type inference helpers
+// ---------------------------------------------------------------------------
+
 export type CreateDraftInput = z.infer<typeof CreateDraftSchema>;
 export type AddVideoInput = z.infer<typeof AddVideoSchema>;
 export type AddAudioInput = z.infer<typeof AddAudioSchema>;
@@ -327,3 +432,5 @@ export type AddEffectInput = z.infer<typeof AddEffectSchema>;
 export type AddStickerInput = z.infer<typeof AddStickerSchema>;
 export type SaveDraftInput = z.infer<typeof SaveDraftSchema>;
 export type GetDurationInput = z.infer<typeof GetDurationSchema>;
+export type AddAnimatedTextInput = z.infer<typeof AddAnimatedTextSchema>;
+export type AddEditDraftWordsInput = z.infer<typeof AddEditDraftWordsSchema>;

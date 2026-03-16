@@ -1,7 +1,47 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(cd:*)",
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(tsc:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(PYTHONUTF8=1*)",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)",
+      "Bash(mkdir:*)",
+      "Bash(echo:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(pkill:*)",
+      "Bash(sleep:*)",
+      "Bash(*python*)",
+      "Bash(*PYTHONUTF8*)",
+      "mcp__capcut__capcut_create_draft",
+      "mcp__capcut__capcut_add_video",
+      "mcp__capcut__capcut_add_audio",
+      "mcp__capcut__capcut_add_text",
+      "mcp__capcut__capcut_add_image",
+      "mcp__capcut__capcut_add_subtitle",
+      "mcp__capcut__capcut_add_keyframe",
+      "mcp__capcut__capcut_add_effect",
+      "mcp__capcut__capcut_add_sticker",
+      "mcp__capcut__capcut_save_draft",
+      "mcp__capcut__capcut_get_duration",
+      "mcp__capcut__capcut_add_animated_text",
+      "mcp__capcut__capcut_edit_draft_words",
+      "Read(//c/Users/Migue/AppData/Local/CapCut/User Data/Projects/com.lveditor.draft/0206/**)",
+      "Bash(jq:*)",
+      "Bash(/tmp/capcut_words_$$json)",
+      "Read(//tmp/**)",
+      "Bash(PYTHONUTF8=1 /c/Users/Migue/AppData/Local/Programs/Python/Python311/python utils_py/transcribe_audio.py \"C:/Users/Migue/Downloads/Phone Link/inicio.mov\" --lang es --model medium > \"C:/smart_cut/tmp/capcut_words_edit.json\" 2>&1; echo \"EXIT:$?\")"
     ]
   }
 }
