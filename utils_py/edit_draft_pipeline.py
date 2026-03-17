@@ -133,6 +133,7 @@ def run_pipeline(
     font_size:      float = 15.0,
     fade_duration:  float = KF_FADE_DUR,
     draft_folder:   str | None = None,
+    align:          str   = "center",
 ) -> dict:
     """position_x/y are in transform units [-1,1]: 0=center, -1=bottom/left, 1=top/right."""
 
@@ -148,6 +149,7 @@ def run_pipeline(
             screen_height = screen_height,
             font_size     = font_size,
             anchor_y      = position_y,
+            align         = align,
         )
         entries = positioned
         print(
@@ -317,6 +319,8 @@ if __name__ == "__main__":
                         help="Font size for character-width estimation (default: 15.0)")
     parser.add_argument("--fade_duration",  type=float, default=KF_FADE_DUR,
                         help="Fade_In intro animation duration in seconds (default: 0.167 = 5 frames @ 30fps)")
+    parser.add_argument("--align",          default="center", choices=["left", "center"],
+                        help="Horizontal alignment for word-by-word mode: left | center (default: center)")
     args = parser.parse_args()
 
     if args.draft is None and args.draft_folder is None:
@@ -348,5 +352,6 @@ if __name__ == "__main__":
         screen_height  = args.screen_height,
         font_size      = args.font_size,
         fade_duration  = args.fade_duration,
+        align          = args.align,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))

@@ -16,6 +16,7 @@ Solicita los que no haya proporcionado:
 - whisper_model (opcional, default: base): tiny | base | small | medium | large
 - confirm_transcription (opcional, default: true)
 - fade_duration (opcional, default: 0.2): duración del fade de entrada en segundos. 0.167 = 5 frames a 30fps (rápido, ideal subtítulos), 0.4 = medio, 1.5 = lento
+- align (opcional, default: center): alineación horizontal de las palabras — left | center
 
 ## Variables
 
@@ -77,6 +78,7 @@ PYTHONUTF8=1 {PYTHON} utils_py/edit_draft_pipeline.py \
   --screen_width   {SCREEN_WIDTH} \
   --screen_height  {SCREEN_HEIGHT} \
   --fade_duration  {fade_duration} \
+  --align          {align} \
   --word-by-word
 ```
 

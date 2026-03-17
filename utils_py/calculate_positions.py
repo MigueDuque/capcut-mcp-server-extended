@@ -21,14 +21,20 @@ Lines build DOWNWARD from anchor_y:
 When line_index reaches max_lines, the screen clears and the next word
 starts a fresh block at anchor_y again.
 
+Alignment modes (--align):
+  left   — words start from the left edge of the usable area (original behavior)
+  center — each line is centered independently (two-pass algorithm)
+
 Usage:
     python utils_py/calculate_positions.py \\
       --words '[{"word":"Hello","start":0.0,"end":0.5}]' \\
-      --screen_width 1080 --screen_height 1920 --font_size 15.0
+      --screen_width 1080 --screen_height 1920 --font_size 15.0 --align center
 """
 
 import json
 import argparse
+from collections import defaultdict
+
 
 def calculate_positions(
     words: list,
@@ -38,6 +44,7 @@ def calculate_positions(
     margin_x_px:   float = 80.0,
     anchor_y:      float = -0.4,
     max_lines:     int   = 3,
+    align:         str   = "center",
 ) -> list:
     """Return a list of positioned word entries.
 
@@ -71,53 +78,108 @@ def calculate_positions(
     left_edge_tx    = -(usable_width_tx / 2.0)            # e.g. -0.852 tx
 
     # -----------------------------------------------------------------------
-    # Layout state
+    # Pass 1 — Layout: determine line membership and word metrics.
+    # transform_x is NOT assigned here.
     # -----------------------------------------------------------------------
-    cursor_tx  = left_edge_tx
-    line_index = 0
-    need_clear = False
-    result     = []
+    intermediate = []
+    cursor_tx    = left_edge_tx
+    line_index   = 0
+    screen_block = 0
+    need_clear   = False
 
     for w in words:
-        word_text = (w.get("word") or w.get("text", "")).strip().upper()
-        start     = float(w["start"])
-
+        word_text     = (w.get("word") or w.get("text", "")).strip().upper()
         word_width_tx = len(word_text) * CHAR_WIDTH_PX / PX_PER_TX
 
         is_first = (cursor_tx == left_edge_tx)
-        space_tx  = 0.0 if is_first else (SPACE_WIDTH_PX / PX_PER_TX)
+        space_tx = 0.0 if is_first else (SPACE_WIDTH_PX / PX_PER_TX)
 
         # Would this word overflow the usable area?
         right_edge_tx = cursor_tx + space_tx + word_width_tx
         if not is_first and right_edge_tx > left_edge_tx + usable_width_tx:
             # Wrap to next line
-            line_index  += 1
-            cursor_tx    = left_edge_tx
-            space_tx     = 0.0
+            line_index += 1
+            cursor_tx   = left_edge_tx
+            space_tx    = 0.0
 
             if line_index >= max_lines:
                 # Exceeded max_lines → start fresh screen on this word
-                line_index = 0
-                need_clear = True
+                line_index   = 0
+                screen_block += 1
+                need_clear   = True
 
-        # Center of this word in transform units
-        tx = cursor_tx + space_tx + word_width_tx / 2.0
-        # Lines go DOWNWARD from anchor_y (negative direction = lower on screen)
+        # Store the cursor position before advancing (used for left-align tx)
+        left_cursor = cursor_tx
         ty = anchor_y - (line_index * LINE_HEIGHT_TY)
 
-        result.append({
-            **{k: v for k, v in w.items() if k not in ("word", "text", "start", "end")},
-            "word":        word_text,
-            "start":       start,
-            "end":         float(w["end"]),   # overwritten in accumulation pass
-            "transform_x": round(tx, 4),
-            "transform_y": round(ty, 4),
-            "line":        line_index,
-            "clear_before": need_clear,
+        intermediate.append({
+            "w":            w,
+            "word_text":    word_text,
+            "word_width_tx": word_width_tx,
+            "space_tx":     space_tx,
+            "line_index":   line_index,
+            "screen_block": screen_block,
+            "ty":           ty,
+            "need_clear":   need_clear,
+            "left_cursor":  left_cursor,
         })
 
         cursor_tx  += space_tx + word_width_tx
         need_clear  = False
+
+    # -----------------------------------------------------------------------
+    # Pass 2 — Assign transform_x
+    # -----------------------------------------------------------------------
+    if align == "center":
+        # Group word indices by (screen_block, line_index)
+        line_groups: dict = defaultdict(list)
+        for idx, item in enumerate(intermediate):
+            key = (item["screen_block"], item["line_index"])
+            line_groups[key].append(idx)
+
+        # For each line, compute total width then assign centered tx values
+        tx_values: dict[int, float] = {}
+        for indices in line_groups.values():
+            # Total line width: first word has space_tx=0, rest include their space
+            line_width_tx = sum(
+                intermediate[i]["space_tx"] + intermediate[i]["word_width_tx"]
+                for i in indices
+            )
+            cursor = -(line_width_tx / 2.0)
+            for i in indices:
+                item = intermediate[i]
+                tx = cursor + item["space_tx"] + item["word_width_tx"] / 2.0
+                cursor += item["space_tx"] + item["word_width_tx"]
+                tx_values[i] = tx
+
+        result = [
+            {
+                **{k: v for k, v in item["w"].items() if k not in ("word", "text", "start", "end")},
+                "word":         item["word_text"],
+                "start":        float(item["w"]["start"]),
+                "end":          float(item["w"]["end"]),
+                "transform_x":  round(tx_values[idx], 4),
+                "transform_y":  round(item["ty"], 4),
+                "line":         item["line_index"],
+                "clear_before": item["need_clear"],
+            }
+            for idx, item in enumerate(intermediate)
+        ]
+
+    else:  # left — original behavior
+        result = [
+            {
+                **{k: v for k, v in item["w"].items() if k not in ("word", "text", "start", "end")},
+                "word":         item["word_text"],
+                "start":        float(item["w"]["start"]),
+                "end":          float(item["w"]["end"]),
+                "transform_x":  round(item["left_cursor"] + item["space_tx"] + item["word_width_tx"] / 2.0, 4),
+                "transform_y":  round(item["ty"], 4),
+                "line":         item["line_index"],
+                "clear_before": item["need_clear"],
+            }
+            for item in intermediate
+        ]
 
     # -----------------------------------------------------------------------
     # Accumulation pass: all words in a screen share the same end time so
@@ -163,6 +225,8 @@ if __name__ == "__main__":
                         help="transform_y of the first line; -1=bottom 0=center 1=top (default: -0.4)")
     parser.add_argument("--max_lines",     type=int,   default=4,
                         help="Lines before clearing the screen (default: 4)")
+    parser.add_argument("--align",         default="center", choices=["left", "center"],
+                        help="Horizontal alignment: left (original) or center (default: center)")
     args = parser.parse_args()
 
     try:
@@ -179,5 +243,6 @@ if __name__ == "__main__":
         margin_x_px   = args.margin_x_px,
         anchor_y      = args.anchor_y,
         max_lines     = args.max_lines,
+        align         = args.align,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
