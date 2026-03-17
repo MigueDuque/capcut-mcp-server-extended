@@ -22,7 +22,7 @@ Usage:
 
 Env vars:
     CAPCUT_API_URL   VectCutAPI base URL    (default: http://localhost:9001)
-    VECTCUT_DRAFT_DIR  Dir where API saves drafts (default: C:/smart_cut/capcut-mcp)
+    VECTCUT_DRAFT_DIR  Dir where API saves drafts (default: C:/capcut_project/capcut-mcp-back)
 """
 
 import json
@@ -33,14 +33,14 @@ import argparse
 import urllib.request
 
 API_URL         = os.environ.get("CAPCUT_API_URL",    "http://localhost:9001")
-VECTCUT_DIR     = os.environ.get("VECTCUT_DRAFT_DIR", "C:/smart_cut/capcut-mcp")
+VECTCUT_DIR     = os.environ.get("VECTCUT_DRAFT_DIR", "C:/capcut_project/capcut-mcp-back")
 
 # ---------------------------------------------------------------------------
 # Typography presets (mirrors src/presets/typography.ts)
 # ---------------------------------------------------------------------------
 STYLES = {
     "defaultTypeWhite": {
-        "font": "Poppins_Bold", "font_size": 15, "font_color": "#ecebeb",
+        "font": "Poppins_Bold", "font_size": 18, "font_color": "#ecebeb",
         "border_width": 40, "border_color": "#000000",
         "shadow_enabled": True,  "shadow_color": "#000000",
         "shadow_alpha": 0.25, "shadow_blur": 23, "shadow_distance": 10, "shadow_angle": -70,
@@ -127,13 +127,13 @@ def add_words_to_draft(
         track = f"w_{i}"
 
         r = api_post("/add_text", {
-            "draft_id": draft_id,
-            "text": text,
-            "start": start,
-            "end": end,
-            "position_x": position_x,
-            "position_y": position_y,
-            "track_name": track,
+            "draft_id":    draft_id,
+            "text":        text,
+            "start":       start,
+            "end":         end,
+            "transform_x": position_x,
+            "transform_y": position_y,
+            "track_name":  track,
             **style_params,
         })
         if not r.get("success"):

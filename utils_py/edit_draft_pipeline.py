@@ -29,7 +29,7 @@ Usage:
 
 Env vars:
     CAPCUT_API_URL    (default: http://localhost:9001)
-    VECTCUT_DRAFT_DIR (default: C:/smart_cut/capcut-mcp)
+    VECTCUT_DRAFT_DIR (default: C:/capcut_project/capcut-mcp-back)
 """
 
 import json
@@ -44,10 +44,12 @@ from group_words import group_words                          # phrase grouping l
 from word_layout import compute_layout                       # build-up word positioning
 from calc_subtitle_y import compute_phrases_with_y           # phrase grouping + per-phrase Y
 from add_words_to_draft import STYLES, api_post, wait_for_file  # API helpers + style presets
+from calculate_positions import calculate_positions           # word-by-word XY layout
 
-VECTCUT_DIR  = os.environ.get("VECTCUT_DRAFT_DIR", "C:/smart_cut/capcut-mcp")
-KF_OFFSET    = 13 / 30   # popInUpper: 13 frames @ 30 fps ≈ 0.433 s
-KF_Y_OFFSET  = 0.03      # fall distance: start this many units above final position
+VECTCUT_DIR  = os.environ.get("VECTCUT_DRAFT_DIR", "C:/capcut_project/capcut-mcp-back")
+KF_OFFSET    = 5 / 30    # popInUpper: 5 frames @ 30 fps ≈ 0.167 s — controls position drop timing
+KF_FADE_DUR  = 0.2       # Fade_In intro animation duration — 5 frames @ 30 fps (fast, subtitle-style)
+KF_Y_OFFSET  = 0.04      # slide distance in transform units [-1,1]: element starts this far ABOVE final pos (y+ = up)
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +58,8 @@ KF_Y_OFFSET  = 0.03      # fall distance: start this many units above final posi
 
 def _add_entry(draft_id: str, index: int, entry: dict,
                style_params: dict, animation: str | None,
-               position_x: float, position_y: float) -> tuple[int, bool, str | None]:
+               position_x: float, position_y: float,
+               fade_duration: float = KF_FADE_DUR) -> tuple[int, bool, str | None]:
     """Add one word/phrase as text + keyframes. Returns (index, ok, error_msg).
 
     If entry contains 'position_x' / 'position_y' keys (from word_layout),
@@ -67,37 +70,42 @@ def _add_entry(draft_id: str, index: int, entry: dict,
     end   = float(entry["end"])
     track = f"w_{index}"
 
-    px = entry.get("position_x", position_x)
-    py = entry.get("position_y", position_y)
+    # transform_x/y from calculate_positions ([-1,1] space) override global defaults
+    px = entry.get("transform_x", entry.get("position_x", position_x))
+    py = entry.get("transform_y", entry.get("position_y", position_y))
 
-    r = api_post("/add_text", {
-        "draft_id":   draft_id,
-        "text":       text,
-        "start":      start,
-        "end":        end,
-        "position_x": px,
-        "position_y": py,
-        "track_name": track,
+    add_text_payload: dict = {
+        "draft_id":    draft_id,
+        "text":        text,
+        "start":       start,
+        "end":         end,
+        "transform_x": px,
+        "transform_y": py,
+        "track_name":  track,
         **style_params,
-    })
+    }
+    if animation == "popInUpper":
+        # Fade-in via CapCut's native Text_intro animation (KFTypeAlpha is not
+        # supported on text segments — native animation is the correct path).
+        add_text_payload["intro_animation"] = "Fade_In"
+        add_text_payload["intro_duration"]  = fade_duration
+
+    r = api_post("/add_text", add_text_payload)
     if not r.get("success"):
         return (index, False, f"add_text: {r.get('error')}")
 
     if animation == "popInUpper":
         t0, t1 = start, start + KF_OFFSET
-        for prop, vals in [
-            ("alpha",      ["0",                    "1"]),
-            ("position_y", [str(py + KF_Y_OFFSET),  str(py)]),
-        ]:
-            r2 = api_post("/add_video_keyframe", {
-                "draft_id":       draft_id,
-                "track_name":     track,
-                "property_types": [prop, prop],
-                "times":          [t0, t1],
-                "values":         vals,
-            })
-            if not r2.get("success"):
-                return (index, False, f"kf_{prop}: {r2.get('error')}")
+        # Position Y: element starts KF_Y_OFFSET above final position and falls down
+        r2 = api_post("/add_video_keyframe", {
+            "draft_id":       draft_id,
+            "track_name":     track,
+            "property_types": ["position_y", "position_y"],
+            "times":          [t0, t1],
+            "values":         [str(round(py + KF_Y_OFFSET, 4)), str(py)],
+        })
+        if not r2.get("success"):
+            return (index, False, f"kf_pos_y: {r2.get('error')}")
 
     return (index, True, None)
 
@@ -107,12 +115,12 @@ def _add_entry(draft_id: str, index: int, entry: dict,
 # ---------------------------------------------------------------------------
 
 def run_pipeline(
-    draft_path:     str,
-    words:          list,
+    draft_path:     str | None = None,
+    words:          list = (),
     style:          str       = "defaultTypeWhite",
     animation:      str | None = "popInUpper",
-    position_x:     float = 0.5,
-    position_y:     float = 0.10,
+    position_x:     float = 0.0,
+    position_y:     float = -0.4,
     max_chars:      int   = 35,
     max_gap:        float = 0.5,
     max_workers:    int   = 8,
@@ -120,24 +128,33 @@ def run_pipeline(
     word_by_word:   bool  = True,
     line_height:    float = 0.06,
     chars_per_line: int   = 20,
+    screen_width:   int   = 1080,
+    screen_height:  int   = 1920,
+    font_size:      float = 15.0,
+    fade_duration:  float = KF_FADE_DUR,
+    draft_folder:   str | None = None,
 ) -> dict:
+    """position_x/y are in transform units [-1,1]: 0=center, -1=bottom/left, 1=top/right."""
 
     if style not in STYLES:
         raise ValueError(f"Unknown style '{style}'. Available: {list(STYLES)}")
 
     # Step 1 — compute entries
     if word_by_word:
-        # Word-by-word mode: one element per word, centered, fixed position_y
-        entries = [
-            {
-                "text":       (w.get("word") or w.get("text", "")),
-                "start":      w["start"],
-                "end":        w["end"],
-                "position_y": position_y,
-            }
-            for w in words
-        ]
-        print(f"[pipeline] word-by-word: {len(entries)} words", flush=True)
+        # Word-by-word mode: use calculate_positions for per-word XY layout
+        positioned = calculate_positions(
+            words         = words,
+            screen_width  = screen_width,
+            screen_height = screen_height,
+            font_size     = font_size,
+            anchor_y      = position_y,
+        )
+        entries = positioned
+        print(
+            f"[pipeline] word-by-word: {len(entries)} words "
+            f"({screen_width}x{screen_height}, font={font_size})",
+            flush=True,
+        )
     elif buildup:
         # Build-up mode: per-word positions, words persist until phrase ends
         entries = compute_layout(words, base_y=position_y,
@@ -154,7 +171,7 @@ def run_pipeline(
     style_params = STYLES[style]
 
     # Step 2 — create temp text-only draft
-    r = api_post("/create_draft", {"width": 1080, "height": 1920})
+    r = api_post("/create_draft", {"width": screen_width, "height": screen_height})
     if not r.get("success"):
         raise RuntimeError(f"create_draft failed: {r.get('error')}")
     draft_id = r["output"]["draft_id"]
@@ -167,7 +184,7 @@ def run_pipeline(
         futures = {
             pool.submit(
                 _add_entry,
-                draft_id, i, p, style_params, animation, position_x, position_y
+                draft_id, i, p, style_params, animation, position_x, position_y, fade_duration
             ): i
             for i, p in enumerate(entries)
         }
@@ -189,7 +206,49 @@ def run_pipeline(
     with open(source_path, encoding="utf-8") as f:
         source = json.load(f)
 
-    # Step 5 — backup + read target
+    # Step 6 — extract text tracks (named w_N) and their materials from temp draft
+    text_tracks = [
+        t for t in source.get("tracks", [])
+        if t.get("name", "").startswith("w_")
+    ]
+
+    # Collect material_id and extra_material_refs (animations, etc.)
+    used_ids  = set()
+    extra_refs = set()
+    for t in text_tracks:
+        for seg in t.get("segments", []):
+            used_ids.add(seg.get("material_id"))
+            for ref in seg.get("extra_material_refs", []):
+                extra_refs.add(ref)
+
+    src_texts = [
+        m for m in source.get("materials", {}).get("texts", [])
+        if m.get("id") in used_ids
+    ]
+    src_anims = [
+        m for m in source.get("materials", {}).get("material_animations", [])
+        if m.get("id") in extra_refs
+    ]
+
+    # Step 7a — new-draft mode: copy temp folder to draft_folder
+    if draft_folder is not None and draft_path is None:
+        import shutil
+        dest = os.path.join(draft_folder, draft_id)
+        if os.path.exists(dest):
+            shutil.rmtree(dest)
+        shutil.copytree(os.path.dirname(source_path), dest)
+        mode = "word_by_word" if word_by_word else ("buildup" if buildup else "phrases")
+        return {
+            "draft_id":            draft_id,
+            "entries_added":       len(entries),
+            "source_words":        len(words),
+            "text_tracks_merged":  len(text_tracks),
+            "materials_merged":    len(src_texts) + len(src_anims),
+            "errors":              len(errors),
+            "mode":                mode,
+        }
+
+    # Step 7b — merge mode: inject into existing draft_content.json
     with open(draft_path, encoding="utf-8") as f:
         target = json.load(f)
 
@@ -198,23 +257,9 @@ def run_pipeline(
         with open(bak_path, "w", encoding="utf-8") as f:
             json.dump(target, f, ensure_ascii=False)
 
-    # Step 6 — merge text tracks (named w_N) and their materials
-    text_tracks = [
-        t for t in source.get("tracks", [])
-        if t.get("name", "").startswith("w_")
-    ]
     target.setdefault("tracks", []).extend(text_tracks)
-
-    used_ids = {
-        seg.get("material_id")
-        for t in text_tracks
-        for seg in t.get("segments", [])
-    }
-    src_texts = [
-        m for m in source.get("materials", {}).get("texts", [])
-        if m.get("id") in used_ids
-    ]
     target.setdefault("materials", {}).setdefault("texts", []).extend(src_texts)
+    target.setdefault("materials", {}).setdefault("material_animations", []).extend(src_anims)
 
     with open(draft_path, "w", encoding="utf-8") as f:
         json.dump(target, f, ensure_ascii=False)
@@ -224,7 +269,7 @@ def run_pipeline(
         "entries_added":       len(entries),
         "source_words":        len(words),
         "text_tracks_merged":  len(text_tracks),
-        "materials_merged":    len(src_texts),
+        "materials_merged":    len(src_texts) + len(src_anims),
         "errors":              len(errors),
         "mode":                mode,
     }
@@ -238,14 +283,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Words → phrases → subtitles on existing CapCut draft (parallelized)"
     )
-    parser.add_argument("--draft",       required=True,  help="Path to draft_content.json")
-    parser.add_argument("--words",       required=True,  help="Path to words JSON file")
+    parser.add_argument("--draft",        default=None,   help="Path to draft_content.json (merge mode)")
+    parser.add_argument("--draft_folder", default=None,   help="CapCut drafts directory; creates a new project (no --draft needed)")
+    parser.add_argument("--words",        required=True,  help="Path to words JSON file, or inline JSON string")
     parser.add_argument("--style",       default="defaultTypeWhite", choices=list(STYLES))
     parser.add_argument("--animation",   default="popInUpper",
                         help="popInUpper | none  (default: popInUpper)")
-    parser.add_argument("--position_x",     type=float, default=0.5)
-    parser.add_argument("--position_y",     type=float, default=0.10,
-                        help="Base Y for 1-line phrases; 0=bottom, 1=top (default: 0.10)")
+    parser.add_argument("--position_x",     type=float, default=0.0,
+                        help="transform_x center for fallback (word-by-word uses auto layout); -1=left 0=center 1=right (default: 0.0)")
+    parser.add_argument("--position_y",     type=float, default=-0.4,
+                        help="anchor_y: transform_y of first subtitle line; -1=bottom 0=center 1=top (default: -0.4)")
     parser.add_argument("--max-chars",      type=int,   default=35)
     parser.add_argument("--max-gap",        type=float, default=0.5)
     parser.add_argument("--max-workers",    type=int,   default=8,
@@ -262,13 +309,29 @@ if __name__ == "__main__":
                         help="Build-up mode: per-word horizontal layout (requires --no-word-by-word)")
     parser.add_argument("--no-buildup",     action="store_false", dest="buildup",
                         help="Phrase mode: one element per phrase with Y adjustment (requires --no-word-by-word)")
+    parser.add_argument("--screen_width",   type=int,   default=1080,
+                        help="Screen width in px for position calculation (default: 1080)")
+    parser.add_argument("--screen_height",  type=int,   default=1920,
+                        help="Screen height in px for position calculation (default: 1920)")
+    parser.add_argument("--font_size",      type=float, default=15.0,
+                        help="Font size for character-width estimation (default: 15.0)")
+    parser.add_argument("--fade_duration",  type=float, default=KF_FADE_DUR,
+                        help="Fade_In intro animation duration in seconds (default: 0.167 = 5 frames @ 30fps)")
     args = parser.parse_args()
 
-    with open(args.words, encoding="utf-8") as f:
-        words = json.load(f)
+    if args.draft is None and args.draft_folder is None:
+        parser.error("Provide --draft (merge mode) or --draft_folder (new draft mode)")
+
+    # Accept inline JSON string or path to file
+    if args.words.strip().startswith("["):
+        words = json.loads(args.words)
+    else:
+        with open(args.words, encoding="utf-8") as f:
+            words = json.load(f)
 
     result = run_pipeline(
         draft_path     = args.draft,
+        draft_folder   = args.draft_folder,
         words          = words,
         style          = args.style,
         animation      = args.animation if args.animation != "none" else None,
@@ -281,5 +344,9 @@ if __name__ == "__main__":
         buildup        = args.buildup,
         line_height    = args.line_height,
         chars_per_line = args.chars_per_line,
+        screen_width   = args.screen_width,
+        screen_height  = args.screen_height,
+        font_size      = args.font_size,
+        fade_duration  = args.fade_duration,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))

@@ -7,10 +7,15 @@ Solicita los que no haya proporcionado:
 - draft_path (requerido): ruta a la carpeta del draft
 - typography_style (opcional, default: defaultTypeWhite): defaultTypeWhite | defaultTypeBlack | defaultTypeRed
 - animation_in (opcional, default: popInUpper): popInUpper | ninguna
-- position_y (opcional, default: 0.1): Y del subtítulo; 0=fondo de pantalla, 1=tope — valor bajo = más abajo
-- position_x (opcional, default: 0.5)
+- position_y (opcional, default: -0.4): Y del subtítulo en coordenadas transform; -1=fondo, 0=centro, 1=tope
+- position_x (opcional, default: 0.0): X del subtítulo; -1=izquierda, 0=centro, 1=derecha
+- screen_type (opcional, default: mobile):
+    mobile  → 1080×1920
+    desktop → 1920×1080
+    custom  → preguntar screen_width y screen_height
 - whisper_model (opcional, default: base): tiny | base | small | medium | large
 - confirm_transcription (opcional, default: true)
+- fade_duration (opcional, default: 0.2): duración del fade de entrada en segundos. 0.167 = 5 frames a 30fps (rápido, ideal subtítulos), 0.4 = medio, 1.5 = lento
 
 ## Variables
 
@@ -19,6 +24,11 @@ PYTHON=/c/Users/Migue/AppData/Local/Programs/Python/Python311/python
 TMP_DIR=C:/smart_cut/tmp
 WORDS_TMP={TMP_DIR}/capcut_words_$$.json
 DRAFT_JSON={draft_path}/draft_content.json
+
+# Resolución según screen_type
+screen_type=mobile  → SCREEN_WIDTH=1080  SCREEN_HEIGHT=1920
+screen_type=desktop → SCREEN_WIDTH=1920  SCREEN_HEIGHT=1080
+screen_type=custom  → preguntar al usuario
 ```
 
 ---
@@ -64,6 +74,9 @@ PYTHONUTF8=1 {PYTHON} utils_py/edit_draft_pipeline.py \
   --animation      {animation_in_or_none} \
   --position_x     {position_x} \
   --position_y     {position_y} \
+  --screen_width   {SCREEN_WIDTH} \
+  --screen_height  {SCREEN_HEIGHT} \
+  --fade_duration  {fade_duration} \
   --word-by-word
 ```
 

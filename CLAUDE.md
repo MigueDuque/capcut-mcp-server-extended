@@ -283,6 +283,10 @@ python utils_py/edit_draft_pipeline.py \
 
 Archivos temporales: usar siempre `C:/smart_cut/tmp/` como directorio intermedio.
 
+**`VECTCUT_DRAFT_DIR`**: el backend (VectCutAPI) guarda los drafts temporales en su propio
+directorio de trabajo. El default es `C:/capcut_project/capcut-mcp-back` (carpeta del backend).
+Si el backend se corre desde otra ruta, pasar `VECTCUT_DRAFT_DIR=<ruta>` como variable de entorno.
+
 **Rendimiento**: para 25 palabras hace ~75 llamadas API en paralelo.
 Tiempo estimado: 3-6s.
 

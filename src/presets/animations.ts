@@ -42,10 +42,10 @@ const popInUpper: AnimationDefinition = {
   description: 'Falls from slightly above its final position with fade in',
   frame_rate: 30,
   keyframes: [
-    // Positive y_offset = higher on screen in CapCut keyframe space.
-    // Start 0.03 units above final resting position → subtle fall into place.
-    { frame_offset: 0,  opacity: 0, position_y_offset: 0.03 },
-    { frame_offset: 13, opacity: 1, position_y_offset: 0 },
+    // Negative y_offset = below final position in CapCut keyframe space.
+    // Element starts 0.15 units below its resting Y and slides UP into place.
+    { frame_offset: 0, opacity: 0, position_y_offset: 0.15 },
+    { frame_offset: 5, opacity: 1, position_y_offset: 0 },
   ],
 };
 

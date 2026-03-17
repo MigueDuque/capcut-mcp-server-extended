@@ -37,7 +37,7 @@ export interface TypographyStyle {
 
 const defaultTypeWhite: TypographyStyle = {
   font: 'Poppins_Bold',
-  font_size: 15,
+  font_size: 30,
   color: '#ecebeb',
   stroke: { enabled: true, color: '#000000', thickness: 40 },
   shadow: { enabled: true, color: '#000000', opacity: 0.25, blur: 23, distance: 10, angle: -70 },
@@ -45,7 +45,7 @@ const defaultTypeWhite: TypographyStyle = {
 
 const defaultTypeBlack: TypographyStyle = {
   font: 'Poppins_Bold',
-  font_size: 15,
+  font_size: 17,
   color: '#000000',
   stroke: { enabled: false, color: '#000000', thickness: 0 },
   shadow: { enabled: false, color: '#000000', opacity: 0, blur: 0, distance: 0, angle: 0 },
@@ -53,7 +53,7 @@ const defaultTypeBlack: TypographyStyle = {
 
 const defaultTypeRed: TypographyStyle = {
   font: 'Poppins_Bold',
-  font_size: 15,
+  font_size: 17,
   color: '#aa1a1a',
   stroke: { enabled: false, color: '#000000', thickness: 0 },
   shadow: { enabled: false, color: '#000000', opacity: 0, blur: 0, distance: 0, angle: 0 },
